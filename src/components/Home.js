@@ -46,7 +46,6 @@ const Home = () => {
       <View style={styles.header}>
         <View style={styles.profileSection}>
           <Text style={styles.greeting}>Hi, Controller</Text>
-          <Text style={styles.date}>27 June 2024</Text>
         </View>
       </View>
 
@@ -120,10 +119,6 @@ const styles = StyleSheet.create({
     fontSize: 24,
     color: '#FFFFFF',
     fontWeight: '600',
-  },
-  date: {
-    color: '#666666',
-    fontSize: 14,
   },
   card: {
     backgroundColor: '#262626',

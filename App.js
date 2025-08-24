@@ -9,6 +9,7 @@ import SlamScreen from './src/screens/SlamScreen';
 import ArmControlScreen from './src/screens/ArmControlScreen';
 import NavigationScreen from './src/screens/NavigationScreen';
 import SensorsScreen from './src/screens/SensorsScreen';
+import Slam from './src/components/Slam';
 
 const Tab = createBottomTabNavigator();
 
