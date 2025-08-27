@@ -1,38 +1,45 @@
-// components/RosConnector.js
-
-import { useEffect } from 'react';
+// src/components/RosConnector.js
+import React, { useEffect } from 'react';
 import ROSLIB from 'roslib';
+
+// Export the ROS instance so other components can use it
+export let rosInstance = null;
 
 const RosConnector = ({ setRos, setConnected, ipAddress }) => {
   useEffect(() => {
-    if (!ipAddress) return; // Don't connect if IP is not provided
+    if (!ipAddress) return;
 
-    const rosConnection = new ROSLIB.Ros({
+    // Create ROS connection
+    const ros = new ROSLIB.Ros({
       url: `ws://${ipAddress}:9090`
     });
 
-    rosConnection.on('connection', () => {
-      console.log('Connected to ROS bridge at:', ipAddress);
+    rosInstance = ros; // Set the global instance
+
+    ros.on('connection', () => {
+      console.log('Connected to ROS bridge');
       setConnected(true);
+      setRos(ros);
     });
 
-    rosConnection.on('error', (error) => {
-      console.log('Error connecting to ROS:', error);
+    ros.on('error', (error) => {
+      console.error('Error connecting to ROS:', error);
+      setConnected(false);
     });
 
-    rosConnection.on('close', () => {
+    ros.on('close', () => {
       console.log('Connection to ROS closed');
       setConnected(false);
     });
 
-    setRos(rosConnection);
-
     return () => {
-      rosConnection.close();
+      if (ros) {
+        ros.close();
+      }
     };
-  }, [ipAddress]); // Add ipAddress as dependency
+  }, [ipAddress, setRos, setConnected]);
 
-  return null; // This component only handles logic, not UI
+  return null; // This component doesn't render anything
 };
 
 export default RosConnector;
