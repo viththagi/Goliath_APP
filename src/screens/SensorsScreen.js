@@ -50,7 +50,7 @@ const SensorsScreen = () => {
   const [showRawData, setShowRawData] = useState(false);
 
   // Hard-coded ROS connection
-  const ROS_IP = '192.168.2.23'; // Your robot's IP
+  const ROS_IP = '192.168.2.7'; // Your robot's IP
   const ROS_PORT = 9090;
   const ros = useRef(null);
 

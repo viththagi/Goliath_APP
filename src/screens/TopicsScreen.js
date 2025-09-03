@@ -1,58 +1,141 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
+// src/screens/TopicEchoScreen.js
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, Modal, FlatList } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import ROSLIB from 'roslib';
 
-export default function TopicsScreen() {
-  const [topics, setTopics] = useState([]);
-  const [loading, setLoading] = useState(false);
+const TopicEchoScreen = () => {
+  const [messages, setMessages] = useState([]);
   const [isConnected, setIsConnected] = useState(false);
   const [ros, setRos] = useState(null);
+  const [topics, setTopics] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [selectedTopic, setSelectedTopic] = useState('/unilidar/cloud');
+  const [topicModalVisible, setTopicModalVisible] = useState(false);
+  
+  // Use refs for cleanup and screen state tracking
+  const currentSubscriptionRef = useRef(null);
+  const rosInstanceRef = useRef(null);
+  const isScreenActiveRef = useRef(true);
 
-  // Create a separate ROS connection for this screen
+  // Track screen focus/unfocus
   useEffect(() => {
-    console.log('Creating ROS connection for TopicsScreen...');
+    isScreenActiveRef.current = true;
     
-    const rosInstance = new ROSLIB.Ros({
-      url: 'ws://192.168.2.23:9090' // Hardcode your robot's IP
-    });
-
-    setRos(rosInstance);
-
-    rosInstance.on('connection', () => {
-      console.log('TopicsScreen: ROS connected successfully');
-      setIsConnected(true);
-    });
-
-    rosInstance.on('error', (error) => {
-      console.log('TopicsScreen: ROS connection error', error);
-      setIsConnected(false);
-      Alert.alert('Connection Error', `Failed to connect: ${error.message}`);
-    });
-
-    rosInstance.on('close', () => {
-      console.log('TopicsScreen: ROS connection closed');
-      setIsConnected(false);
-    });
-
-    // Cleanup
     return () => {
-      if (rosInstance) {
-        rosInstance.close();
-        console.log('TopicsScreen: Cleaned up ROS connection');
-      }
+      isScreenActiveRef.current = false;
+      cleanupSubscriptions();
+      cleanupROS();
     };
   }, []);
 
+  const cleanupSubscriptions = () => {
+    if (currentSubscriptionRef.current) {
+      currentSubscriptionRef.current.unsubscribe();
+      currentSubscriptionRef.current = null;
+      console.log('Unsubscribed from topic');
+    }
+  };
+
+  const cleanupROS = () => {
+    if (rosInstanceRef.current) {
+      rosInstanceRef.current.close();
+      rosInstanceRef.current = null;
+      console.log('Closed ROS connection');
+    }
+  };
+
+  // Create ROS connection
+  useEffect(() => {
+    if (!isScreenActiveRef.current) return;
+
+    console.log('Creating ROS connection for TopicEchoScreen...');
+    
+    const rosInstance = new ROSLIB.Ros({
+      url: 'ws://192.168.2.7:9090'
+    });
+
+    rosInstanceRef.current = rosInstance;
+    setRos(rosInstance);
+
+    rosInstance.on('connection', () => {
+      if (!isScreenActiveRef.current) return;
+      console.log('TopicEchoScreen: ROS connected successfully');
+      setIsConnected(true);
+      fetchTopics();
+    });
+
+    rosInstance.on('error', (error) => {
+      if (!isScreenActiveRef.current) return;
+      console.log('TopicEchoScreen: ROS connection error', error);
+      setIsConnected(false);
+    });
+
+    rosInstance.on('close', () => {
+      if (!isScreenActiveRef.current) return;
+      console.log('TopicEchoScreen: ROS connection closed');
+      setIsConnected(false);
+    });
+
+    return () => {
+      cleanupSubscriptions();
+      cleanupROS();
+    };
+  }, []);
+
+  // Subscribe to topic when selection changes
+  useEffect(() => {
+    if (!isScreenActiveRef.current) return;
+
+    cleanupSubscriptions();
+
+    if (ros && isConnected && selectedTopic) {
+      subscribeToTopic(selectedTopic);
+    }
+  }, [selectedTopic, ros, isConnected]);
+
+  const fetchTopics = async () => {
+    if (!ros || !isConnected || !isScreenActiveRef.current) return;
+
+    setLoading(true);
+    
+    try {
+      const topicList = await fetchTopicsWithROSAPI();
+      if (isScreenActiveRef.current) {
+        setTopics(topicList);
+      }
+    } catch (error) {
+      console.log('rosapi failed, using fallback topics:', error.message);
+      
+      if (isScreenActiveRef.current) {
+        const fallbackTopics = [
+          '/unilidar/cloud',
+          '/joint_state/commands',
+          '/cmd_vel',
+          '/odom',
+          '/scan',
+          '/tf',
+          '/tf_static',
+          '/rosout',
+          '/parameter_events',
+          '/rosapi/topics'
+        ];
+        setTopics(fallbackTopics);
+      }
+    } finally {
+      if (isScreenActiveRef.current) {
+        setLoading(false);
+      }
+    }
+  };
+
   const fetchTopicsWithROSAPI = () => {
     return new Promise((resolve, reject) => {
-      if (!ros || !isConnected) {
+      if (!ros || !isConnected || !isScreenActiveRef.current) {
         reject(new Error('Not connected to ROS'));
         return;
       }
 
-      console.log('Calling rosapi service...');
-      
       const topicListService = new ROSLIB.Service({
         ros: ros,
         name: '/rosapi/topics',
@@ -61,7 +144,6 @@ export default function TopicsScreen() {
 
       const request = new ROSLIB.ServiceRequest({});
 
-      // Set timeout for the service call
       const timeout = setTimeout(() => {
         reject(new Error('rosapi service timeout'));
       }, 5000);
@@ -69,8 +151,7 @@ export default function TopicsScreen() {
       topicListService.callService(request, (result) => {
         clearTimeout(timeout);
         
-        if (result && result.topics) {
-          console.log('Received topics from rosapi:', result.topics.length);
+        if (result && result.topics && isScreenActiveRef.current) {
           resolve(result.topics);
         } else {
           reject(new Error('rosapi returned empty result'));
@@ -79,79 +160,98 @@ export default function TopicsScreen() {
     });
   };
 
-  const fetchTopics = async () => {
-    if (!ros || !isConnected) {
-      Alert.alert('Error', 'Not connected to ROS. Please wait for connection.');
-      return;
-    }
+  const subscribeToTopic = (topicName) => {
+    if (!ros || !isConnected || !isScreenActiveRef.current) return;
 
-    setLoading(true);
-    setTopics([]);
-    
     try {
-      console.log('Fetching topics...');
-      const topicList = await fetchTopicsWithROSAPI();
-      setTopics(topicList);
+      let messageType = 'std_msgs/String';
       
-      if (topicList.length > 0) {
-        Alert.alert('Success', `Found ${topicList.length} topics using rosapi`);
+      if (topicName.includes('cloud') || topicName.includes('point')) {
+        messageType = 'sensor_msgs/PointCloud2';
+      } else if (topicName.includes('cmd_vel')) {
+        messageType = 'geometry_msgs/Twist';
+      } else if (topicName.includes('odom')) {
+        messageType = 'nav_msgs/Odometry';
+      } else if (topicName.includes('scan')) {
+        messageType = 'sensor_msgs/LaserScan';
+      } else if (topicName.includes('joint')) {
+        messageType = 'sensor_msgs/JointState';
       }
-      
+
+      const topic = new ROSLIB.Topic({
+        ros: ros,
+        name: topicName,
+        messageType: messageType
+      });
+
+      topic.subscribe((message) => {
+        if (!isScreenActiveRef.current) return;
+
+        const timestamp = new Date().toLocaleTimeString();
+        let displayData = '';
+
+        if (messageType === 'sensor_msgs/PointCloud2') {
+          displayData = `Points: ${message.width * message.height}, Step: ${message.point_step} bytes`;
+        } else if (messageType === 'geometry_msgs/Twist') {
+          displayData = `Linear: [${message.linear.x?.toFixed(2) || 0}, ${message.linear.y?.toFixed(2) || 0}, ${message.linear.z?.toFixed(2) || 0}], Angular: [${message.angular.x?.toFixed(2) || 0}, ${message.angular.y?.toFixed(2) || 0}, ${message.angular.z?.toFixed(2) || 0}]`;
+        } else if (messageType === 'std_msgs/String') {
+          displayData = `Data: ${message.data}`;
+        } else {
+          displayData = JSON.stringify(message).substring(0, 100) + '...';
+        }
+
+        setMessages(prev => [...prev, {
+          timestamp: timestamp,
+          data: displayData,
+          topic: topicName,
+          messageType: messageType
+        }].slice(-50));
+      });
+
+      currentSubscriptionRef.current = topic;
+      setMessages([]);
+
     } catch (error) {
-      console.log('rosapi failed, using fallback topics:', error.message);
-      
-      // Fallback to manual topic discovery or common topics
-      const fallbackTopics = [
-        '/unilidar/cloud',
-        '/joint_state/commands',
-        '/cmd_vel',
-        '/odom',
-        '/scan',
-        '/tf',
-        '/tf_static',
-        '/rosout',
-        '/parameter_events',
-        '/rosapi/topics'
-      ];
-      
-      setTopics(fallbackTopics);
-      Alert.alert(
-        'Info', 
-        `Using fallback topics. rosapi service might not be available.\n\nError: ${error.message}`
-      );
-    } finally {
-      setLoading(false);
+      console.error('Error subscribing to topic:', error);
+      if (isScreenActiveRef.current) {
+        Alert.alert('Error', `Failed to subscribe to ${topicName}: ${error.message}`);
+      }
     }
   };
 
-  const testConnection = () => {
-    if (!ros) {
-      Alert.alert('Error', 'ROS instance not created yet');
-      return;
-    }
-    
-    const status = ros.isConnected ? 'Connected' : 'Disconnected';
-    Alert.alert(
-      'Connection Test',
-      `Status: ${status}\n` +
-      `URL: ${ros.url || 'Not set'}\n` +
-      `Connection State: ${ros.connectionState || 'unknown'}`
-    );
+  const handleTopicSelect = (topic) => {
+    if (!isScreenActiveRef.current) return;
+    setSelectedTopic(topic);
+    setTopicModalVisible(false);
+  };
+
+  const clearMessages = () => {
+    if (!isScreenActiveRef.current) return;
+    setMessages([]);
   };
 
   const reconnect = () => {
-    if (ros) {
-      ros.close();
-      // The useEffect will recreate the connection
-      Alert.alert('Info', 'Reconnecting to ROS...');
-    }
+    if (!isScreenActiveRef.current) return;
+    
+    cleanupSubscriptions();
+    cleanupROS();
+    
+    // Recreate connection
+    const newRosInstance = new ROSLIB.Ros({
+      url: 'ws://192.168.2.7:9090'
+    });
+
+    rosInstanceRef.current = newRosInstance;
+    setRos(newRosInstance);
+
+    Alert.alert('Info', 'Reconnecting to ROS...');
   };
 
   return (
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>ROS Topics</Text>
+        <Text style={styles.title}>Topic Echo</Text>
         <View style={styles.statusContainer}>
           <View style={[styles.statusDot, { backgroundColor: isConnected ? '#4CAF50' : '#F44336' }]} />
           <Text style={styles.statusText}>
@@ -160,38 +260,52 @@ export default function TopicsScreen() {
         </View>
       </View>
 
+      {/* Topic Selection */}
+      <View style={styles.topicSelector}>
+        <TouchableOpacity 
+          style={styles.topicButton}
+          onPress={() => setTopicModalVisible(true)}
+          disabled={!isConnected}
+        >
+          <Ionicons name="list" size={20} color="#E0AA3E" />
+          <Text style={styles.topicButtonText} numberOfLines={1}>
+            {selectedTopic || 'Select Topic'}
+          </Text>
+          <Ionicons name="chevron-down" size={16} color="#E0AA3E" />
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={styles.refreshButton}
+          onPress={fetchTopics}
+          disabled={!isConnected || loading}
+        >
+          <Ionicons name="refresh" size={20} color={loading ? '#666' : '#E0AA3E'} />
+        </TouchableOpacity>
+      </View>
+
       {/* Connection Info */}
       <View style={styles.connectionInfo}>
-        <Text style={styles.connectionText}>ws://192.168.2.23:9090</Text>
-        <Text style={styles.connectionSubtext}>Direct connection</Text>
+        <Text style={styles.connectionText}>ws://192.168.2.7:9090</Text>
+        {selectedTopic && (
+          <Text style={styles.connectionSubtext}>Listening to: {selectedTopic}</Text>
+        )}
       </View>
 
       {/* Controls */}
       <View style={styles.controls}>
         <TouchableOpacity 
-          style={[styles.button, (!isConnected || loading) && styles.buttonDisabled]}
-          onPress={fetchTopics}
-          disabled={!isConnected || loading}
+          style={styles.button}
+          onPress={clearMessages}
         >
-          <Ionicons name="refresh" size={20} color="#FFF" />
-          <Text style={styles.buttonText}>
-            {loading ? 'Loading...' : 'Get Topics'}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={styles.buttonSecondary}
-          onPress={testConnection}
-        >
-          <Ionicons name="wifi" size={20} color="#E0AA3E" />
-          <Text style={styles.buttonTextSecondary}>Test</Text>
+          <Ionicons name="trash" size={16} color="#FFF" />
+          <Text style={styles.buttonText}>Clear Messages</Text>
         </TouchableOpacity>
 
         <TouchableOpacity 
           style={styles.buttonSecondary}
           onPress={reconnect}
         >
-          <Ionicons name="reload" size={20} color="#E0AA3E" />
+          <Ionicons name="reload" size={16} color="#E0AA3E" />
           <Text style={styles.buttonTextSecondary}>Reconnect</Text>
         </TouchableOpacity>
       </View>
@@ -199,60 +313,91 @@ export default function TopicsScreen() {
       {/* Stats */}
       <View style={styles.stats}>
         <Text style={styles.statText}>
-          Topics: {topics.length} | Status: {isConnected ? 'Online' : 'Offline'}
+          Messages: {messages.length} | Topic: {selectedTopic || 'None'}
         </Text>
       </View>
 
-      {/* Topics List */}
-      <ScrollView style={styles.topicsContainer}>
-        {loading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#E0AA3E" />
-            <Text style={styles.loadingText}>Fetching topics from ROS...</Text>
-            <Text style={styles.loadingSubtext}>This may take a few seconds</Text>
-          </View>
-        ) : topics.length === 0 ? (
+      {/* Messages List */}
+      <ScrollView style={styles.messagesContainer}>
+        {messages.length === 0 ? (
           <View style={styles.emptyState}>
-            <Ionicons name="list" size={48} color="#666" />
-            <Text style={styles.emptyText}>No topics loaded</Text>
+            <Ionicons name="radio" size={48} color="#666" />
+            <Text style={styles.emptyText}>No messages received</Text>
             <Text style={styles.emptySubtext}>
               {isConnected 
-                ? 'Press "Get Topics" to discover available topics'
+                ? 'Select a topic and wait for messages...'
                 : 'Waiting for ROS connection...'
               }
             </Text>
           </View>
         ) : (
-          topics.map((topic, index) => (
-            <View key={index} style={styles.topicItem}>
-              <Ionicons 
-                name="radio" 
-                size={16} 
-                color={topic === '/unilidar/cloud' ? '#E0AA3E' : '#888'} 
-              />
-              <Text style={[
-                styles.topicName,
-                topic === '/unilidar/cloud' && styles.highlightedTopic
-              ]} numberOfLines={1}>
-                {topic}
-              </Text>
+          messages.map((msg, index) => (
+            <View key={index} style={styles.messageItem}>
+              <Text style={styles.timestamp}>[{msg.timestamp}] {msg.topic}</Text>
+              <Text style={styles.message}>{msg.data}</Text>
             </View>
-          ))
+          )).reverse() // Show newest first
         )}
       </ScrollView>
 
-      {/* Footer */}
-      <View style={styles.footer}>
-        <Text style={styles.footerText}>
-          {isConnected 
-            ? 'Connected to robot at 192.168.2.23' 
-            : 'Connecting to 192.168.2.23...'
-          }
-        </Text>
-      </View>
+      {/* Topic Selection Modal */}
+      <Modal
+        visible={topicModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setTopicModalVisible(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Topic</Text>
+              <TouchableOpacity onPress={() => setTopicModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#FFF" />
+              </TouchableOpacity>
+            </View>
+
+            {loading ? (
+              <ActivityIndicator size="large" color="#E0AA3E" style={styles.modalLoading} />
+            ) : (
+              <FlatList
+                data={topics}
+                keyExtractor={(item, index) => index.toString()}
+                renderItem={({ item }) => (
+                  <TouchableOpacity 
+                    style={[
+                      styles.topicItem,
+                      item === selectedTopic && styles.selectedTopicItem
+                    ]}
+                    onPress={() => handleTopicSelect(item)}
+                  >
+                    <Ionicons 
+                      name="radio" 
+                      size={16} 
+                      color={item === selectedTopic ? '#E0AA3E' : '#888'} 
+                    />
+                    <Text style={[
+                      styles.topicName,
+                      item === selectedTopic && styles.selectedTopicName
+                    ]}>
+                      {item}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={
+                  <Text style={styles.noTopicsText}>No topics available</Text>
+                }
+              />
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
-}
+};
+
+// ... styles object ...
+
+
 
 const styles = StyleSheet.create({
   container: {
@@ -290,6 +435,33 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 12,
   },
+  topicSelector: {
+    flexDirection: 'row',
+    padding: 15,
+    gap: 10,
+    backgroundColor: '#262626',
+  },
+  topicButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#333',
+    padding: 12,
+    borderRadius: 10,
+    gap: 8,
+  },
+  topicButtonText: {
+    color: '#E0AA3E',
+    fontWeight: '600',
+    flex: 1,
+  },
+  refreshButton: {
+    padding: 12,
+    backgroundColor: '#333',
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   connectionInfo: {
     padding: 15,
     backgroundColor: '#2A2A2A',
@@ -312,7 +484,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#262626',
   },
   button: {
-    flex: 2,
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -320,9 +492,6 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 10,
     gap: 8,
-  },
-  buttonDisabled: {
-    opacity: 0.5,
   },
   buttonSecondary: {
     flex: 1,
@@ -343,7 +512,6 @@ const styles = StyleSheet.create({
   buttonTextSecondary: {
     color: '#E0AA3E',
     fontWeight: '600',
-    fontSize: 12,
   },
   stats: {
     padding: 10,
@@ -355,24 +523,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'monospace',
   },
-  topicsContainer: {
+  messagesContainer: {
     flex: 1,
     padding: 15,
-  },
-  loadingContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 40,
-  },
-  loadingText: {
-    color: '#E0AA3E',
-    marginTop: 16,
-    fontSize: 16,
-  },
-  loadingSubtext: {
-    color: '#888',
-    marginTop: 8,
-    fontSize: 12,
   },
   emptyState: {
     alignItems: 'center',
@@ -390,32 +543,76 @@ const styles = StyleSheet.create({
     marginTop: 8,
     textAlign: 'center',
   },
-  topicItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  messageItem: {
     backgroundColor: '#2A2A2A',
     padding: 12,
     borderRadius: 8,
     marginBottom: 8,
+  },
+  timestamp: {
+    color: '#888',
+    fontSize: 10,
+    fontFamily: 'monospace',
+    marginBottom: 4,
+  },
+  message: {
+    color: '#FFF',
+    fontSize: 12,
+    fontFamily: 'monospace',
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#262626',
+    borderRadius: 16,
+    width: '90%',
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  modalTitle: {
+    color: '#FFF',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  modalLoading: {
+    padding: 40,
+  },
+  topicItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
     gap: 10,
   },
+  selectedTopicItem: {
+    backgroundColor: '#333',
+  },
   topicName: {
-    color: '#FFFFFF',
+    color: '#FFF',
     fontSize: 14,
-    fontFamily: 'monospace',
     flex: 1,
   },
-  highlightedTopic: {
+  selectedTopicName: {
     color: '#E0AA3E',
     fontWeight: '600',
   },
-  footer: {
-    padding: 15,
-    backgroundColor: '#262626',
-    alignItems: 'center',
-  },
-  footerText: {
-    color: '#888',
-    fontSize: 12,
+  noTopicsText: {
+    color: '#666',
+    textAlign: 'center',
+    padding: 40,
   },
 });
+
+export default TopicEchoScreen;

@@ -30,7 +30,7 @@ const NavigationScreen = () => {
   const [customGoal, setCustomGoal] = useState({ x: '', y: '', theta: '' });
 
   // Hard-coded ROS connection for Nav2
-  const ROS_IP = '192.168.2.23'; // Your Nav2 robot's IP
+  const ROS_IP = '192.168.2.7'; // Your Nav2 robot's IP
   const ROS_PORT = 9090;
   const ros = useRef(null);
   const poseSubscriber = useRef(null);
