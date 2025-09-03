@@ -3,12 +3,18 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 
+import * as ROS from './src/services/rosService';
+import { ROSProvider } from './src/contexts/ROSContext';
 
-import HomeScreen from './src/screens/HomeScreen';
 import SlamScreen from './src/screens/SlamScreen';
 import ArmControlScreen from './src/screens/ArmControlScreen';
 import NavigationScreen from './src/screens/NavigationScreen';
 import SensorsScreen from './src/screens/SensorsScreen';
+import TopicsScreen from './src/screens/TopicsScreen';
+import PointCloudScreen from './src/screens/PointCloudScreen';
+import SimpleEchoScreen from './src/screens/SimpleEchoScreen';
+
+
 
 const Tab = createBottomTabNavigator();
 
@@ -22,29 +28,33 @@ export default function App() {
             backgroundColor: '#1A1A1A',
             borderTopWidth: 0,
             position: 'absolute',
-            bottom: 15, // Increased from 0 to raise the nav bar
-            left: 15,   // Added left padding
-            right: 15,  // Added right padding
+            bottom: 25,
+            left: 15,
+            right: 15,
             height: 60,
             paddingTop: 5,
             paddingBottom: 5,
             elevation: 0,
             shadowOpacity: 0,
-            borderRadius: 20, // Added rounded corners
-            marginHorizontal: 10, // Added horizontal margin
+            borderRadius: 20,
+            marginHorizontal: 10,
           },
           tabBarIcon: ({ focused, color, size }) => {
             let iconName;
-            if (route.name === 'Home') iconName = focused ? 'wallet' : 'wallet-outline';
-            else if (route.name === 'SLAM') iconName = focused ? 'map' : 'map-outline';
+            if (route.name === 'SLAM') iconName = focused ? 'map' : 'map-outline';
             else if (route.name === 'Arm') iconName = focused ? 'git-branch' : 'git-branch-outline';
             else if (route.name === 'Navigate') iconName = focused ? 'navigate' : 'navigate-outline';
             else if (route.name === 'Sensors') iconName = focused ? 'hardware-chip' : 'hardware-chip-outline';
+            else if (route.name === 'Topics') iconName = focused ? 'list' : 'list-outline';
+            else if (route.name === '3D Map') iconName = focused ? 'cube' : 'cube-outline';
+            else if (route.name === 'SimpleEcho') iconName = focused ? 'bug' : 'bug-outline';
             
+            else if (route.name === '3D Arm') iconName = focused ? 'body' : 'body-outline'; // Icon for 3D Arm
+
             return <Ionicons name={iconName} size={24} color={color} />;
           },
-          tabBarActiveTintColor: '#E0AA3E', // Gold accent color
-          tabBarInactiveTintColor: '#666666', // Darker grey for inactive
+          tabBarActiveTintColor: '#E0AA3E',
+          tabBarInactiveTintColor: '#666666',
           tabBarLabelStyle: {
             fontSize: 12,
             fontWeight: '500',
@@ -54,44 +64,58 @@ export default function App() {
           },
         })}
       >
-        <Tab.Screen 
-          name="Home" 
-          component={HomeScreen}
+        <Tab.Screen
+          name="SimpleEcho"
+          component={SimpleEchoScreen}
           options={{
-            tabBarLabel: 'Home'
+            tabBarLabel: 'Simple Echo',
           }}
         />
-        <Tab.Screen 
-          name="SLAM" 
+        <Tab.Screen
+          name="3D Map"
+          component={PointCloudScreen}
+          options={{
+            tabBarLabel: '3D Map',
+          }}
+        />
+        <Tab.Screen
+          name="Topics"
+          component={TopicsScreen}
+          options={{
+            tabBarLabel: 'Topics',
+          }}
+        />
+        <Tab.Screen
+          name="SLAM"
           component={SlamScreen}
           options={{
-            tabBarLabel: 'SLAM'
+            tabBarLabel: 'SLAM',
           }}
         />
-        <Tab.Screen 
-          name="Arm" 
+        <Tab.Screen
+          name="Arm"
           component={ArmControlScreen}
           options={{
-            tabBarLabel: 'Arm'
+            tabBarLabel: 'Arm',
           }}
         />
-        <Tab.Screen 
-          name="Navigate" 
+        
+        <Tab.Screen
+          name="Navigate"
           component={NavigationScreen}
           options={{
-            tabBarLabel: 'Navigate'
+            tabBarLabel: 'Navigate',
           }}
         />
-        <Tab.Screen 
-          name="Sensors" 
+        <Tab.Screen
+          name="Sensors"
           component={SensorsScreen}
           options={{
-            tabBarLabel: 'Sensors'
+            tabBarLabel: 'Sensors',
           }}
         />
+        
       </Tab.Navigator>
     </NavigationContainer>
   );
 }
-
-
