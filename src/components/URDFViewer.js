@@ -1,250 +1,367 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, PanResponder, Animated } from 'react-native';
+// src/components/URDFViewer.js
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import { Canvas, useFrame } from '@react-three/fiber/native';
+import * as THREE from 'three';
+import ROSLIB from 'roslib';
 
-const URDFViewer = ({ 
-  joint1Angle = 0,
-  joint2Angle = 0, 
-  joint3Angle = 0,
-  joint4Angle = 0,
-  joint5Angle = 0 
-}) => {
-  const [rotationX, setRotationX] = useState(new Animated.Value(0));
-  const [rotationY, setRotationY] = useState(new Animated.Value(0));
+// Grid Component (unchanged)
+const Grid = ({ size = 10, color = '#444' }) => {
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
+      <planeGeometry args={[size, size]} />
+      <meshBasicMaterial color={color} wireframe opacity={0.3} transparent />
+    </mesh>
+  );
+};
 
-  // Convert radians to degrees
-  const joint1Deg = joint1Angle * (180 / Math.PI);
-  const joint2Deg = joint2Angle * (180 / Math.PI);
-  const joint3Deg = joint3Angle * (180 / Math.PI);
-  const joint4Deg = joint4Angle * (180 / Math.PI);
-  const joint5Deg = joint5Angle * (180 / Math.PI);
+// Axis Helper Component - ROS Convention (unchanged)
+const Axis = ({ size = 2 }) => {
+  return (
+    <>
+      {/* X Axis (Red) - FORWARD */}
+      <mesh position={[size/2, 0, -0.33]}>
+        <boxGeometry args={[size, 0.03, 0.03]} />
+        <meshBasicMaterial color="red" />
+      </mesh>
+      {/* Y Axis (Green) - LEFT */}
+      <mesh position={[0, size/2, -0.33]} rotation={[0, 0, Math.PI/2]}>
+        <boxGeometry args={[size, 0.03, 0.03]} />
+        <meshBasicMaterial color="green" />
+      </mesh>
+      {/* Z Axis (Blue) - UP */}
+      <mesh position={[0, 0, size/3]} rotation={[0, Math.PI/2, 0]}>
+        <boxGeometry args={[size, 0.03, 0.03]} />
+        <meshBasicMaterial color="blue" />  
+      </mesh>
+    </>
+  );
+};
 
-  // Create pan responder for 3D rotation
-  const panResponder = PanResponder.create({
-    onMoveShouldSetPanResponder: () => true,
-    onPanResponderMove: (evt, gestureState) => {
-      setRotationY(new Animated.Value(gestureState.dx * 0.5));
-      setRotationX(new Animated.Value(gestureState.dy * 0.5));
-    },
-  });
-
-  // 3D Robot arm segments with proper hierarchy
-  const renderRobotArm = () => {
-    return (
-      <View style={styles.robotContainer}>
-        {/* Base */}
-        <View style={[styles.base, { transform: [{ rotateZ: `${joint1Deg}deg` }] }]}>
-          <View style={styles.baseVisual} />
-          
-          {/* Link 1 - Shoulder */}
-          <View style={[styles.link1, { transform: [{ rotateY: `${joint2Deg}deg` }] }]}>
-            <View style={styles.linkVisual} />
-            
-            {/* Link 2 - Elbow */}
-            <View style={[styles.link2, { transform: [{ rotateY: `${joint3Deg}deg` }] }]}>
-              <View style={[styles.linkVisual, { backgroundColor: '#E0AA3E' }]} />
-              
-              {/* Link 3 - Wrist */}
-              <View style={[styles.link3, { transform: [{ rotateY: `${joint4Deg}deg` }] }]}>
-                <View style={[styles.linkVisual, { backgroundColor: '#FFA500' }]} />
-                
-                {/* End Effector */}
-                <View style={[styles.endEffector, { transform: [{ rotateY: `${joint5Deg}deg` }] }]}>
-                  <View style={styles.gripperLeft} />
-                  <View style={styles.gripperRight} />
-                </View>
-              </View>
-            </View>
-          </View>
-        </View>
-      </View>
-    );
-  };
+// Robot Arm Component - UPDATED to use joint_1, joint_2, etc.
+const RobotArm = ({ jointAngles = {} }) => {
+  // Extract joint angles with defaults
+  const joint1 = jointAngles.joint_1 || 0;
+  const joint2 = jointAngles.joint_2 || 0;
+  const joint3 = jointAngles.joint_3 || 0;
+  const joint4 = jointAngles.joint_4 || 0;
+  const joint5 = jointAngles.joint_5 || 0;
+  const joint6 = jointAngles.joint_6 || 0;
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>3D Goliath Robot Arm</Text>
+    <group rotation={[Math.PI/2, 0, 0]}>
+      {/* Base (Link 1) */}
+      <mesh position={[0, -0.33, 0]}>
+        <cylinderGeometry args={[0.15, 0.2, 0.05, 32]} />
+        <meshStandardMaterial color="#888888" metalness={0.3} roughness={0.7} />
+      </mesh>
       
-      <Animated.View 
-        style={[
-          styles.viewport3D,
-          {
-            transform: [
-              { perspective: 1000 },
-              { rotateX: rotationX.interpolate({
-                inputRange: [-100, 100],
-                outputRange: ['-15deg', '15deg'],
-              })},
-              { rotateY: rotationY.interpolate({
-                inputRange: [-100, 100],
-                outputRange: ['-30deg', '30deg'],
-              })},
-            ],
-          },
-        ]}
-        {...panResponder.panHandlers}
+      {/* Shoulder (Link 2) - joint_1 */}
+      <group rotation={[joint1, 0, 0]}>
+        <mesh position={[0, -0.24, 0]}>
+          <boxGeometry args={[0.1, 0.1, 0.1]} />
+          <meshStandardMaterial color="#FF6B6B" metalness={0.3} roughness={0.7} />
+        </mesh>
+        
+        {/* Upper Arm (Link 3) - joint_2 */}
+        <group position={[0, -0.03, 0]} rotation={[0, 0, joint2]}>
+          <mesh position={[0, 0, 0]}>
+            <boxGeometry args={[0.06, 0.3, 0.06]} />
+            <meshStandardMaterial color="#4ECDC4" metalness={0.3} roughness={0.7} />
+          </mesh>
+          
+          {/* Lower Arm (Link 4) - joint_3 */}
+          <group position={[0, 0.3, 0]} rotation={[joint3, 0, 0]}>
+            <mesh position={[0, -0.03, 0]}>
+              <boxGeometry args={[0.05, 0.25, 0.05]} />
+              <meshStandardMaterial color="#45B7D1" metalness={0.3} roughness={0.7} />
+            </mesh>
+            
+            {/* Wrist (Link 5) - joint_4 */}
+            <mesh position={[0, 0.12, 0]}>
+              <cylinderGeometry args={[0.04, 0.04, 0.06, 16]} />
+              <meshStandardMaterial color="#F9A826" metalness={0.3} roughness={0.7} />
+            </mesh>
+            
+            {/* End-Effector Link (eflink, Link 6) - joint_5 */}
+            <group position={[0, 0.19, 0]} rotation={[joint5, 0, 0]}>
+              <mesh position={[0, 0, 0]}>
+                <cylinderGeometry args={[0.03, 0.03, 0.08, 16]} />
+                <meshStandardMaterial color="#666666" metalness={0.3} roughness={0.7} />
+              </mesh>
+              
+              {/* Gripper Link (Link 7) - joint_6 */}
+              <group position={[0, 0.06, 0]} rotation={[0, 0, joint6]}>
+                <mesh position={[-0.03, 0, 0]}>
+                  <boxGeometry args={[0.02, 0.1, 0.04]} />
+                  <meshStandardMaterial color="#E71D36" metalness={0.3} roughness={0.7} />
+                </mesh>
+                <mesh position={[0.03, 0, 0]}>
+                  <boxGeometry args={[0.02, 0.1, 0.04]} />
+                  <meshStandardMaterial color="#E71D36" metalness={0.3} roughness={0.7} />
+                </mesh>
+              </group>
+            </group>
+          </group>
+        </group>
+      </group>
+    </group>
+  );
+};
+
+// 3D Scene Component (unchanged)
+const URDFScene = ({ 
+  autoRotate = false,
+  showGrid = true,
+  showAxis = true,
+  jointAngles = {}
+}) => {
+  const groupRef = useRef();
+
+  useFrame((state, delta) => {
+    if (autoRotate && groupRef.current) {
+      groupRef.current.rotation.z += delta * 0.3;
+    }
+  });
+
+  return (
+    <>
+      <ambientLight intensity={0.6} />
+      <pointLight position={[5, 5, 5]} intensity={0.8} />
+      <pointLight position={[-5, -5, 5]} intensity={0.4} />
+      <directionalLight position={[10, 10, 5]} intensity={0.5} />
+      
+      <group ref={groupRef}>
+        {showGrid && <Grid />}
+        {showAxis && <Axis />}
+        <RobotArm jointAngles={jointAngles} />
+      </group>
+    </>
+  );
+};
+
+const URDFViewer = ({ 
+  ros = null,
+  isConnected = false,
+  jointStatesTopic = '/joint_states',
+  autoRotate = false,
+  showGrid = true,
+  showAxis = true,
+  showOverlay = true,
+  showLoading = true,
+  showError = true,
+  style = {},
+  defaultJointAngles = { 
+    joint_1: 0, 
+    joint_2: 0, 
+    joint_3: 0, 
+    joint_4: 0,
+    joint_5: 0,
+    joint_6: 0
+  },
+  height = 300,
+  width = '100%'
+}) => {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [jointStates, setJointStates] = useState(defaultJointAngles);
+  const [connectionStatus, setConnectionStatus] = useState('Initializing...');
+
+  // Make jointStates reactive to defaultJointAngles if not connected
+  useEffect(() => {
+    if (!ros || !isConnected) {
+      setJointStates(defaultJointAngles);
+    }
+  }, [defaultJointAngles, ros, isConnected]);
+
+  useEffect(() => {
+    if (!ros) {
+      setError('ROS connection not provided - using demo mode');
+      setConnectionStatus('Demo Mode (No ROS connection)');
+      setLoading(false);
+      return;
+    }
+
+    setError(null);
+    setConnectionStatus('Connecting to ROS...');
+
+    // Use provided isConnected if available, else check ros
+    if (isConnected || ros.isConnected) {
+      setConnectionStatus('Connected to ROS');
+      setLoading(false);
+      subscribeToJointStates();
+    }
+
+    // Set up ROS event listeners
+    const handleConnection = () => {
+      setConnectionStatus('Connected to ROS');
+      setLoading(false);
+      setError(null);
+      subscribeToJointStates();
+    };
+
+    const handleError = (err) => {
+      setConnectionStatus('ROS connection error');
+      setError(`ROS error: ${err.message}`);
+      setLoading(false);
+    };
+
+    const handleClose = () => {
+      setConnectionStatus('Disconnected from ROS');
+      setError('ROS connection closed');
+      setLoading(false);
+    };
+
+    ros.on('connection', handleConnection);
+    ros.on('error', handleError);
+    ros.on('close', handleClose);
+
+    // If already connected, subscribe
+    if (ros.isConnected) {
+      handleConnection();
+    }
+
+    function subscribeToJointStates() {
+      try {
+        const jointStatesListener = new ROSLIB.Topic({
+          ros: ros,
+          name: jointStatesTopic,
+          messageType: 'sensor_msgs/JointState'
+        });
+
+        jointStatesListener.subscribe((message) => {
+          try {
+            const states = {};
+            if (message.name && message.position) {
+              // Direct mapping - use the actual joint names from ROS
+              message.name.forEach((name, index) => {
+                states[name] = message.position[index];
+              });
+              setJointStates(states);
+              setConnectionStatus('Receiving joint states');
+            }
+          } catch (err) {
+            setError(`Error processing joint states: ${err.message}`);
+          }
+        });
+      } catch (err) {
+        setError(`Error creating listener: ${err.message}`);
+      }
+    }
+
+    return () => {
+      ros.off('connection', handleConnection);
+      ros.off('error', handleError);
+      ros.off('close', handleClose);
+    };
+  }, [ros, jointStatesTopic, isConnected]);
+
+  return (
+    <View style={[styles.container, style, { height, width, flex: 0 }]}>
+      <Canvas
+        style={[styles.canvas, { height, width }]}
+        camera={{ position: [0, -1.2, 0.5], fov: 60 }}
+        onCreated={({ gl }) => {
+          gl.setClearColor('#111133');
+        }}
       >
-        {renderRobotArm()}
-      </Animated.View>
+        <URDFScene 
+          autoRotate={autoRotate}
+          showGrid={showGrid}
+          showAxis={showAxis}
+          jointAngles={jointStates}
+        />
+      </Canvas>
       
-      <View style={styles.controls}>
-        <Text style={styles.controlText}>Drag to rotate • Pinch to zoom</Text>
-      </View>
+      {showOverlay && (
+        <View style={styles.overlay}>
+          <Text style={styles.overlayText}>🤖 Robot Arm Viewer</Text>
+          <Text style={styles.overlayText}>Status: {connectionStatus}</Text>
+          <Text style={styles.overlayText}>Joints: {Object.keys(jointStates).length}</Text>
+          {Object.entries(jointStates).slice(0, 6).map(([joint, angle]) => (
+            <Text key={joint} style={styles.overlayText}>
+              {joint}: {(angle * 180 / Math.PI).toFixed(1)}°
+            </Text>
+          ))}
+        </View>
+      )}
       
-      <View style={styles.jointInfo}>
-        <View style={styles.jointRow}>
-          <Text style={styles.jointLabel}>Base:</Text>
-          <Text style={styles.jointValue}>{joint1Deg.toFixed(1)}°</Text>
+      {showLoading && loading && (
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color="#E0AA3E" />
+          <Text style={styles.loadingText}>Loading Robot Model...</Text>
         </View>
-        <View style={styles.jointRow}>
-          <Text style={styles.jointLabel}>Shoulder:</Text>
-          <Text style={styles.jointValue}>{joint2Deg.toFixed(1)}°</Text>
+      )}
+      
+      {showError && error && (
+        <View style={styles.errorOverlay}>
+          <Text style={styles.errorText}>{error}</Text>
+          <Text style={styles.infoText}>Topic: {jointStatesTopic}</Text>
         </View>
-        <View style={styles.jointRow}>
-          <Text style={styles.jointLabel}>Elbow:</Text>
-          <Text style={styles.jointValue}>{joint3Deg.toFixed(1)}°</Text>
-        </View>
-        <View style={styles.jointRow}>
-          <Text style={styles.jointLabel}>Wrist:</Text>
-          <Text style={styles.jointValue}>{joint4Deg.toFixed(1)}°</Text>
-        </View>
-        <View style={styles.jointRow}>
-          <Text style={styles.jointLabel}>End:</Text>
-          <Text style={styles.jointValue}>{joint5Deg.toFixed(1)}°</Text>
-        </View>
-      </View>
+      )}
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    height: 450,
-    backgroundColor: '#262626',
-    borderRadius: 10,
-    margin: 10,
-    padding: 15,
-  },
-  title: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
-    textAlign: 'center',
-    marginBottom: 10,
-  },
-  viewport3D: {
-    flex: 1,
-    backgroundColor: '#1A1A1A',
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: '#000',
+    borderRadius: 12,
     overflow: 'hidden',
+    flex: 0,
   },
-  robotContainer: {
-    width: 200,
-    height: 200,
-    justifyContent: 'center',
-    alignItems: 'center',
+  canvas: {
+    width: '100%',
   },
-  base: {
-    width: 60,
-    height: 60,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  baseVisual: {
-    width: 50,
-    height: 30,
-    backgroundColor: '#666666',
-    borderRadius: 5,
-    borderWidth: 2,
-    borderColor: '#E0AA3E',
-  },
-  link1: {
-    width: 80,
-    height: 20,
+  loadingOverlay: {
     position: 'absolute',
-    top: -40,
-    justifyContent: 'center',
-    alignItems: 'flex-end',
-  },
-  link2: {
-    width: 60,
-    height: 15,
-    position: 'absolute',
-    right: -60,
-    justifyContent: 'center',
-    alignItems: 'flex-end',
-  },
-  link3: {
-    width: 50,
-    height: 12,
-    position: 'absolute',
-    right: -50,
-    justifyContent: 'center',
-    alignItems: 'flex-end',
-  },
-  linkVisual: {
-    flex: 1,
-    backgroundColor: '#E0AA3E',
-    borderRadius: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 2, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 3,
-    elevation: 5,
-  },
-  endEffector: {
-    width: 30,
-    height: 20,
-    position: 'absolute',
-    right: -30,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
-    flexDirection: 'row',
+    backgroundColor: 'rgba(17, 17, 51, 0.8)',
   },
-  gripperLeft: {
-    width: 15,
-    height: 3,
-    backgroundColor: '#FF6B6B',
-    marginRight: 2,
-    borderRadius: 1,
+  loadingText: {
+    color: '#FFF',
+    marginTop: 16,
+    fontSize: 16,
   },
-  gripperRight: {
-    width: 15,
-    height: 3,
-    backgroundColor: '#FF6B6B',
-    marginLeft: 2,
-    borderRadius: 1,
+  errorText: {
+    color: '#F44336',
+    fontSize: 14,
+    marginBottom: 8,
+    textAlign: 'center',
   },
-  controls: {
-    padding: 8,
-    alignItems: 'center',
-  },
-  controlText: {
-    color: '#888',
-    fontSize: 12,
-    fontStyle: 'italic',
-  },
-  jointInfo: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 10,
-    flexWrap: 'wrap',
-  },
-  jointRow: {
-    alignItems: 'center',
-    marginVertical: 2,
-    minWidth: '30%',
-  },
-  jointLabel: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '500',
-  },
-  jointValue: {
+  infoText: {
     color: '#E0AA3E',
     fontSize: 12,
-    fontWeight: '600',
+    textAlign: 'center',
+  },
+  overlay: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    padding: 8,
+    borderRadius: 6,
+    minWidth: 160,
+    maxHeight: 300,
+  },
+  errorOverlay: {
+    position: 'absolute',
+    bottom: 10,
+    left: 10,
+    right: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    padding: 12,
+    borderRadius: 6,
+  },
+  overlayText: {
+    color: '#FFF',
+    fontSize: 11,
+    marginBottom: 2,
   },
 });
 

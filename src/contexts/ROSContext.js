@@ -19,7 +19,7 @@ export const ROSProvider = ({ children }) => {
 
   useEffect(() => {
     const rosInstance = new ROSLIB.Ros({
-      url: 'ws://192.168.2.23:9090'
+      url: 'ws://192.168.2.7:9090'
     });
 
     rosInstance.on('connection', () => {
