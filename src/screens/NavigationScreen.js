@@ -18,9 +18,13 @@ import ROSLIB from 'roslib';
 
 const { width, height } = Dimensions.get('window');
 
+// Move ROS connection outside component to persist across navigation
+let globalRosNav = null;
+let globalNavConnectionStatus = false;
+
 const NavigationScreen = () => {
-  const [isConnected, setIsConnected] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isConnected, setIsConnected] = useState(globalNavConnectionStatus);
+  const [isLoading, setIsLoading] = useState(false); // Changed from true to false
   const [navStatus, setNavStatus] = useState('ready'); // ready, navigating, paused, arrived
   const [robotPose, setRobotPose] = useState({ x: 0, y: 0, theta: 0 });
   const [goalPose, setGoalPose] = useState({ x: 0, y: 0, theta: 0 });
@@ -53,63 +57,90 @@ const NavigationScreen = () => {
   ];
 
   useEffect(() => {
-    initializeROS();
+    // Check if global ROS connection exists
+    if (globalRosNav && globalNavConnectionStatus) {
+      console.log('Using existing ROS connection for Navigation');
+      ros.current = globalRosNav;
+      setIsConnected(true);
+      setupSubscribers();
+      setupPublishers();
+    } else {
+      // Don't show loading screen, initialize in background
+      initializeROS();
+    }
     
     return () => {
-      // Cleanup on unmount
-      if (ros.current) {
-        ros.current.close();
-      }
+      // Don't close global connection on unmount - keep it for reuse
     };
   }, []);
 
   const initializeROS = () => {
+    // Skip if already connected
+    if (globalRosNav && globalRosNav.isConnected) {
+      setIsConnected(true);
+      return;
+    }
+
     console.log(`Connecting to ROS at ${ROS_IP}:${ROS_PORT} for Navigation...`);
     
-    // Create a new ROS connection
-    ros.current = new ROSLIB.Ros({
+    // Use global connection
+    globalRosNav = new ROSLIB.Ros({
       url: `ws://${ROS_IP}:${ROS_PORT}`
     });
 
-    // Add event listeners
-    ros.current.on('connection', () => {
+    ros.current = globalRosNav;
+
+    globalRosNav.on('connection', () => {
       console.log('Connected to ROS bridge for Navigation');
+      globalNavConnectionStatus = true;
       setIsConnected(true);
       setupSubscribers();
       setupPublishers();
       setIsLoading(false);
     });
 
-    ros.current.on('error', (error) => {
+    globalRosNav.on('error', (error) => {
       console.error('Error connecting to ROS:', error);
+      globalNavConnectionStatus = false;
       setIsConnected(false);
       setIsLoading(false);
-      Alert.alert('Connection Error', `Failed to connect to ${ROS_IP}:${ROS_PORT}`);
+      // Remove the Alert to avoid blocking UI
+      console.log(`Failed to connect to ${ROS_IP}:${ROS_PORT}`);
     });
 
-    ros.current.on('close', () => {
+    globalRosNav.on('close', () => {
       console.log('Connection to ROS closed');
+      globalNavConnectionStatus = false;
       setIsConnected(false);
+      globalRosNav = null;
     });
 
-    // Attempt to connect
+    // Set connection timeout to avoid long waits
+    setTimeout(() => {
+      if (!globalNavConnectionStatus) {
+        console.log('Navigation connection timeout');
+        setIsLoading(false);
+      }
+    }, 2000); // 2 second timeout
+
     try {
-      ros.current.connect(`ws://${ROS_IP}:${ROS_PORT}`);
+      globalRosNav.connect(`ws://${ROS_IP}:${ROS_PORT}`);
     } catch (error) {
       console.error('Failed to connect to ROS:', error);
       setIsLoading(false);
-      Alert.alert('Connection Error', `Failed to connect to ${ROS_IP}:${ROS_PORT}`);
+      // Remove Alert to avoid blocking
     }
   };
 
   const setupSubscribers = () => {
     if (!ros.current) return;
 
-    // Subscribe to robot pose
+    // Add throttling to reduce message load
     poseSubscriber.current = new ROSLIB.Topic({
       ros: ros.current,
       name: POSE_TOPIC,
-      messageType: 'geometry_msgs/PoseWithCovarianceStamped'
+      messageType: 'geometry_msgs/PoseWithCovarianceStamped',
+      throttle_rate: 200 // Throttle to 200ms
     });
 
     poseSubscriber.current.subscribe((message) => {
@@ -121,11 +152,11 @@ const NavigationScreen = () => {
       });
     });
 
-    // Subscribe to battery status (if available)
     batterySubscriber.current = new ROSLIB.Topic({
       ros: ros.current,
       name: BATTERY_TOPIC,
-      messageType: 'sensor_msgs/BatteryState'
+      messageType: 'sensor_msgs/BatteryState',
+      throttle_rate: 1000 // Less frequent battery updates
     });
 
     batterySubscriber.current.subscribe((message) => {
@@ -254,10 +285,13 @@ const NavigationScreen = () => {
   };
 
   const reconnectROS = () => {
-    setIsLoading(true);
+    // Don't show loading screen for reconnection
+    globalRosNav = null;
+    globalNavConnectionStatus = false;
     initializeROS();
   };
 
+  // Only show loading if explicitly needed (keep existing loading screen logic)
   if (isLoading) {
     return (
       <View style={styles.container}>
@@ -582,36 +616,41 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     backgroundColor: '#262626',
+    minHeight: 80, // Ensure minimum height
   },
   title: {
-    fontSize: 22,
+    fontSize: 15,
     color: '#FFFFFF',
     fontWeight: '600',
+    flex: 1, // Allow title to take available space
   },
   statusContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
     backgroundColor: '#333',
     padding: 8,
     borderRadius: 10,
+    minWidth: 120, // Ensure minimum width
+    flexShrink: 0, // Prevent shrinking
   },
   statusText: {
-    fontSize: 14,
+    fontSize: 12, // Slightly smaller to save space
     fontWeight: '600',
+    marginLeft: 5,
   },
   reconnectButton: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#E0AA3E',
-    padding: 5,
+    paddingVertical: 4,
+    paddingHorizontal: 6,
     borderRadius: 5,
-    marginLeft: 10,
+    marginLeft: 8,
   },
   reconnectText: {
-    color: '#000',
-    fontSize: 12,
-    marginLeft: 5,
+    color: '#1A1A1A', // Changed to black for better contrast
+    fontSize: 11, // Smaller font size
+    marginLeft: 3,
     fontWeight: '600',
   },
   statusPanel: {

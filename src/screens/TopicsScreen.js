@@ -94,37 +94,60 @@ const TopicEchoScreen = () => {
     }
   }, [selectedTopic, ros, isConnected]);
 
-  const fetchTopics = async () => {
-    if (!ros || !isConnected || !isScreenActiveRef.current) return;
+  // Immediately fetch topics when connected
+  useEffect(() => {
+    if (ros && isConnected && topics.length === 0) {
+      fetchTopics();
+    }
+  }, [ros, isConnected]);
 
+  // Fetch topics from ROS API or use fallback list
+  const fetchTopics = async () => {
+    if (!isScreenActiveRef.current) {
+      return;
+    }
+
+    console.log('fetchTopics called, current isConnected:', isConnected);
     setLoading(true);
     
-    try {
-      const topicList = await fetchTopicsWithROSAPI();
-      if (isScreenActiveRef.current) {
-        setTopics(topicList);
-      }
-    } catch (error) {
-      console.log('rosapi failed, using fallback topics:', error.message);
-      
-      if (isScreenActiveRef.current) {
-        const fallbackTopics = [
-          '/unilidar/cloud',
-          '/joint_state/commands',
-          '/cmd_vel',
-          '/odom',
-          '/scan',
-          '/tf',
-          '/tf_static',
-          '/rosout',
-          '/parameter_events',
-          '/rosapi/topics'
-        ];
-        setTopics(fallbackTopics);
-      }
-    } finally {
-      if (isScreenActiveRef.current) {
-        setLoading(false);
+    // Always set fallback topics immediately
+    const fallbackTopics = [
+      '/clicked_point',
+      '/client_count',
+      '/connected_clients',
+      '/goal_pose',
+      '/initialpose',
+      '/parameter_events',
+      '/point_cloud',
+      '/position_controller/commands',
+      '/rosout',
+      '/tf',
+      '/tf_static',
+      '/unilidar/cloud',
+      '/unilidar/imu',
+      '/cmd_vel',
+      '/odom',
+      '/scan',
+      '/joint_states'
+    ];
+
+    console.log('Setting fallback topics immediately:', fallbackTopics);
+    setTopics(fallbackTopics);
+    setLoading(false);
+    
+    // Try to get real topics in background if connected
+    if (ros && isConnected) {
+      try {
+        console.log('Attempting to fetch real topics via ROS API...');
+        const topicList = await fetchTopicsWithROSAPI();
+        console.log('ROS API returned topics:', topicList);
+        
+        if (isScreenActiveRef.current && topicList && topicList.length > 0) {
+          console.log('Updating with real topics from ROS API');
+          setTopics(topicList);
+        }
+      } catch (error) {
+        console.log('ROS API failed, keeping fallback topics:', error.message);
       }
     }
   };
@@ -247,31 +270,61 @@ const TopicEchoScreen = () => {
     Alert.alert('Info', 'Reconnecting to ROS...');
   };
 
+  // Add this useEffect to monitor topics state changes:
+  useEffect(() => {
+    console.log('Topics state changed:', topics);
+    console.log('Topics length:', topics.length);
+  }, [topics]);
+
+  // Add this useEffect to monitor modal visibility:
+  useEffect(() => {
+    console.log('Modal visibility changed:', topicModalVisible);
+    if (topicModalVisible) {
+      console.log('Modal opened, current topics:', topics);
+    }
+  }, [topicModalVisible]);
+
   return (
     <View style={styles.container}>
-      {/* Header */}
+      {/* Header - Modified to match other pages */}
       <View style={styles.header}>
         <Text style={styles.title}>Topic Echo</Text>
         <View style={styles.statusContainer}>
-          <View style={[styles.statusDot, { backgroundColor: isConnected ? '#4CAF50' : '#F44336' }]} />
-          <Text style={styles.statusText}>
-            {isConnected ? 'Connected' : 'Disconnected'}
+          <Ionicons 
+            name={isConnected ? 'cloud-done' : 'cloud-offline'} 
+            size={20} 
+            color={isConnected ? '#4CAF50' : '#F44336'} 
+          />
+          <Text style={[styles.statusText, {color: isConnected ? '#4CAF50' : '#F44336'}]}>
+            {isConnected ? 'Connected' : 'Offline'}
           </Text>
+          {!isConnected && (
+            <TouchableOpacity onPress={reconnect} style={styles.reconnectButton}>
+              <Ionicons name="refresh" size={16} color="#1A1A1A" />
+              <Text style={styles.reconnectText}>Reconnect</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
-      {/* Topic Selection */}
+      {/* Topic Selection - Remove the separate reconnect button */}
       <View style={styles.topicSelector}>
         <TouchableOpacity 
           style={styles.topicButton}
-          onPress={() => setTopicModalVisible(true)}
-          disabled={!isConnected}
+          onPress={() => {
+            console.log('Dropdown clicked, isConnected:', isConnected);
+            
+            // Always allow topic selection, even when disconnected
+            fetchTopics().then(() => {
+              setTopicModalVisible(true);
+            });
+          }}
         >
-          <Ionicons name="list" size={20} color="#E0AA3E" />
-          <Text style={styles.topicButtonText} numberOfLines={1}>
+          <Ionicons name="list" size={20} color={!isConnected ? '#666' : '#E0AA3E'} />
+          <Text style={[styles.topicButtonText, {color: !isConnected ? '#666' : '#E0AA3E'}]} numberOfLines={1}>
             {selectedTopic || 'Select Topic'}
           </Text>
-          <Ionicons name="chevron-down" size={16} color="#E0AA3E" />
+          <Ionicons name="chevron-down" size={16} color={!isConnected ? '#666' : '#E0AA3E'} />
         </TouchableOpacity>
 
         <TouchableOpacity 
@@ -281,6 +334,33 @@ const TopicEchoScreen = () => {
         >
           <Ionicons name="refresh" size={20} color={loading ? '#666' : '#E0AA3E'} />
         </TouchableOpacity>
+
+        {//Add this temporary debug button after the refresh button:
+        <TouchableOpacity 
+          style={[styles.refreshButton, {backgroundColor: '#F44336'}]}
+          onPress={() => {
+            console.log('Debug: Manually setting topics');
+            const debugTopics = [
+              '/clicked_point',
+              '/client_count', 
+              '/connected_clients',
+              '/goal_pose',
+              '/initialpose',
+              '/parameter_events',
+              '/point_cloud',
+              '/position_controller/commands',
+              '/rosout',
+              '/tf',
+              '/tf_static',
+              '/unilidar/cloud',
+              '/unilidar/imu'
+            ];
+            setTopics(debugTopics);
+            console.log('Debug: Topics set to:', debugTopics);
+          }}
+        >
+          <Ionicons name="bug" size={20} color="#FFF" />
+        </TouchableOpacity> }
       </View>
 
       {/* Connection Info */}
@@ -291,7 +371,7 @@ const TopicEchoScreen = () => {
         )}
       </View>
 
-      {/* Controls */}
+      {/* Modified Controls - Only keep Clear Messages button */}
       <View style={styles.controls}>
         <TouchableOpacity 
           style={styles.button}
@@ -299,14 +379,6 @@ const TopicEchoScreen = () => {
         >
           <Ionicons name="trash" size={16} color="#FFF" />
           <Text style={styles.buttonText}>Clear Messages</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          style={styles.buttonSecondary}
-          onPress={reconnect}
-        >
-          <Ionicons name="reload" size={16} color="#E0AA3E" />
-          <Text style={styles.buttonTextSecondary}>Reconnect</Text>
         </TouchableOpacity>
       </View>
 
@@ -357,11 +429,14 @@ const TopicEchoScreen = () => {
             </View>
 
             {loading ? (
-              <ActivityIndicator size="large" color="#E0AA3E" style={styles.modalLoading} />
+              <View style={styles.modalLoading}>
+                <ActivityIndicator size="large" color="#E0AA3E" />
+                <Text style={styles.loadingText}>Loading topics...</Text>
+              </View>
             ) : (
               <FlatList
                 data={topics}
-                keyExtractor={(item, index) => index.toString()}
+                keyExtractor={(item, index) => `${item}-${index}`}
                 renderItem={({ item }) => (
                   <TouchableOpacity 
                     style={[
@@ -384,7 +459,20 @@ const TopicEchoScreen = () => {
                   </TouchableOpacity>
                 )}
                 ListEmptyComponent={
-                  <Text style={styles.noTopicsText}>No topics available</Text>
+                  <View style={styles.emptyTopics}>
+                    <Text style={styles.noTopicsText}>
+                      No topics available (Connected: {isConnected ? 'Yes' : 'No'})
+                    </Text>
+                    <Text style={styles.noTopicsText}>
+                      Topics length: {topics.length}
+                    </Text>
+                    <TouchableOpacity onPress={() => {
+                      console.log('Retry button pressed');
+                      fetchTopics();
+                    }} style={styles.retryButton}>
+                      <Text style={styles.retryText}>Retry</Text>
+                    </TouchableOpacity>
+                  </View>
                 }
               />
             )}
@@ -395,10 +483,6 @@ const TopicEchoScreen = () => {
   );
 };
 
-// ... styles object ...
-
-
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -407,33 +491,46 @@ const styles = StyleSheet.create({
   header: {
     padding: 20,
     paddingTop: 40,
-    backgroundColor: '#262626',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    backgroundColor: '#262626',
+    minHeight: 80,
   },
   title: {
-    fontSize: 24,
+    fontSize: 24, // Change this from whatever it currently is
     color: '#FFFFFF',
     fontWeight: '600',
+    flex: 1, // Add this line
   },
   statusContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
     backgroundColor: '#333',
     padding: 8,
-    borderRadius: 15,
-  },
-  statusDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    borderRadius: 10,
+    minWidth: 120,
+    flexShrink: 0,
   },
   statusText: {
-    color: '#FFF',
-    fontWeight: '600',
     fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 5,
+  },
+  reconnectButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E0AA3E',
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    borderRadius: 5,
+    marginLeft: 8,
+  },
+  reconnectText: {
+    color: '#1A1A1A',
+    fontSize: 11,
+    marginLeft: 3,
+    fontWeight: '600',
   },
   topicSelector: {
     flexDirection: 'row',
@@ -587,6 +684,7 @@ const styles = StyleSheet.create({
   },
   modalLoading: {
     padding: 40,
+    alignItems: 'center',
   },
   topicItem: {
     flexDirection: 'row',
@@ -612,6 +710,24 @@ const styles = StyleSheet.create({
     color: '#666',
     textAlign: 'center',
     padding: 40,
+  },
+  emptyTopics: {
+    padding: 40,
+    alignItems: 'center',
+  },
+  retryButton: {
+    backgroundColor: '#E0AA3E',
+    padding: 8,
+    borderRadius: 5,
+    marginTop: 10,
+  },
+  retryText: {
+    color: '#1A1A1A',
+    fontWeight: '600',
+  },
+  loadingText: {
+    color: '#FFF',
+    marginTop: 10,
   },
 });
 

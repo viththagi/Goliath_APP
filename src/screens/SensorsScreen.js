@@ -17,6 +17,10 @@ import ROSLIB from 'roslib';
 
 const { width, height } = Dimensions.get('window');
 
+// Move ROS connection outside component to persist across navigation
+let globalRos = null;
+let globalConnectionStatus = false;
+
 // Custom Progress Bar Component
 const CustomProgressBar = ({ progress, color, style }) => {
   return (
@@ -35,8 +39,8 @@ const CustomProgressBar = ({ progress, color, style }) => {
 };
 
 const SensorsScreen = () => {
-  const [isConnected, setIsConnected] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isConnected, setIsConnected] = useState(globalConnectionStatus);
+  const [isLoading, setIsLoading] = useState(false); // Start as false to show UI immediately
   const [sensorData, setSensorData] = useState({
     lidar: { connected: false, scanCount: 0, range: 0 },
     imu: { connected: false, orientation: { x: 0, y: 0, z: 0, w: 1 }, angularVelocity: { x: 0, y: 0, z: 0 } },
@@ -52,7 +56,7 @@ const SensorsScreen = () => {
   // Hard-coded ROS connection
   const ROS_IP = '192.168.2.7'; // Your robot's IP
   const ROS_PORT = 9090;
-  const ros = useRef(null);
+  const ros = useRef(globalRos);
 
   // ROS Topics for sensors
   const SENSOR_TOPICS = {
@@ -65,121 +69,165 @@ const SensorsScreen = () => {
   };
 
   useEffect(() => {
-    initializeROS();
+    // Check if global ROS connection exists
+    if (globalRos && globalConnectionStatus) {
+      console.log('Using existing ROS connection');
+      ros.current = globalRos;
+      setIsConnected(true);
+      setupSubscribers();
+    } else {
+      // Only show loading if we need to establish new connection
+      setIsLoading(true);
+      initializeROS();
+    }
     
     return () => {
-      if (ros.current) {
-        ros.current.close();
-      }
+      // Don't close global ROS connection on unmount
+      // It will be reused when navigating back
     };
   }, []);
 
   const initializeROS = () => {
+    // Skip if already connecting
+    if (globalRos && globalRos.isConnected) {
+      setIsConnected(true);
+      setIsLoading(false);
+      return;
+    }
+
     console.log(`Connecting to ROS at ${ROS_IP}:${ROS_PORT} for Sensors...`);
     
-    ros.current = new ROSLIB.Ros({
+    globalRos = new ROSLIB.Ros({
       url: `ws://${ROS_IP}:${ROS_PORT}`
     });
 
-    ros.current.on('connection', () => {
+    ros.current = globalRos;
+
+    globalRos.on('connection', () => {
       console.log('Connected to ROS bridge for Sensors');
+      globalConnectionStatus = true;
       setIsConnected(true);
       setupSubscribers();
       setIsLoading(false);
     });
 
-    ros.current.on('error', (error) => {
+    globalRos.on('error', (error) => {
       console.error('Error connecting to ROS:', error);
+      globalConnectionStatus = false;
       setIsConnected(false);
       setIsLoading(false);
+      // Start simulation immediately on connection failure
+      simulateSensors();
     });
 
-    ros.current.on('close', () => {
+    globalRos.on('close', () => {
       console.log('Connection to ROS closed');
+      globalConnectionStatus = false;
       setIsConnected(false);
+      globalRos = null;
     });
 
     try {
-      ros.current.connect(`ws://${ROS_IP}:${ROS_PORT}`);
+      // Reduce connection timeout
+      globalRos.socket.binaryType = 'arraybuffer';
+      globalRos.connect(`ws://${ROS_IP}:${ROS_PORT}`);
+      
+      // Set a timeout to avoid infinite loading
+      setTimeout(() => {
+        if (!globalConnectionStatus) {
+          console.log('Connection timeout, starting simulation');
+          setIsLoading(false);
+          simulateSensors();
+        }
+      }, 3000); // 3 second timeout
+      
     } catch (error) {
       console.error('Failed to connect to ROS:', error);
       setIsLoading(false);
+      simulateSensors();
     }
   };
 
   const setupSubscribers = () => {
     if (!ros.current) return;
 
-    // LiDAR subscriber
-    new ROSLIB.Topic({
-      ros: ros.current,
-      name: SENSOR_TOPICS.SCAN,
-      messageType: 'sensor_msgs/LaserScan'
-    }).subscribe((message) => {
-      setSensorData(prev => ({
-        ...prev,
-        lidar: {
-          connected: true,
-          scanCount: prev.lidar.scanCount + 1,
-          range: message.range_max,
-          ranges: message.ranges
-        }
-      }));
-    });
+    try {
+      // LiDAR subscriber with error handling
+      const lidarTopic = new ROSLIB.Topic({
+        ros: ros.current,
+        name: SENSOR_TOPICS.SCAN,
+        messageType: 'sensor_msgs/LaserScan',
+        throttle_rate: 100 // Throttle to reduce load
+      });
 
-    // IMU subscriber
-    new ROSLIB.Topic({
-      ros: ros.current,
-      name: SENSOR_TOPICS.IMU,
-      messageType: 'sensor_msgs/Imu'
-    }).subscribe((message) => {
-      setSensorData(prev => ({
-        ...prev,
-        imu: {
-          connected: true,
-          orientation: message.orientation,
-          angularVelocity: message.angular_velocity,
-          linearAcceleration: message.linear_acceleration
-        }
-      }));
-    });
+      lidarTopic.subscribe((message) => {
+        setSensorData(prev => ({
+          ...prev,
+          lidar: {
+            connected: true,
+            scanCount: prev.lidar.scanCount + 1,
+            range: message.range_max,
+            ranges: message.ranges
+          }
+        }));
+      });
 
-    // Battery subscriber
-    new ROSLIB.Topic({
-      ros: ros.current,
-      name: SENSOR_TOPICS.BATTERY,
-      messageType: 'sensor_msgs/BatteryState'
-    }).subscribe((message) => {
-      setSensorData(prev => ({
-        ...prev,
-        battery: {
-          level: Math.round(message.percentage * 100),
-          voltage: message.voltage,
-          charging: message.power_supply_status === 1
-        }
-      }));
-    });
+      // IMU subscriber with throttling
+      const imuTopic = new ROSLIB.Topic({
+        ros: ros.current,
+        name: SENSOR_TOPICS.IMU,
+        messageType: 'sensor_msgs/Imu',
+        throttle_rate: 100
+      });
 
-    // Simulate other sensors (replace with actual topics)
+      imuTopic.subscribe((message) => {
+        setSensorData(prev => ({
+          ...prev,
+          imu: {
+            connected: true,
+            orientation: message.orientation,
+            angularVelocity: message.angular_velocity,
+            linearAcceleration: message.linear_acceleration
+          }
+        }));
+      });
+
+      // Battery subscriber
+      const batteryTopic = new ROSLIB.Topic({
+        ros: ros.current,
+        name: SENSOR_TOPICS.BATTERY,
+        messageType: 'sensor_msgs/BatteryState',
+        throttle_rate: 1000 // Battery updates less frequently
+      });
+
+      batteryTopic.subscribe((message) => {
+        setSensorData(prev => ({
+          ...prev,
+          battery: {
+            level: Math.round(message.percentage * 100),
+            voltage: message.voltage,
+            charging: message.power_supply_status === 1
+          }
+        }));
+      });
+
+    } catch (error) {
+      console.error('Error setting up subscribers:', error);
+    }
+
+    // Start simulation for sensors not available via ROS
     simulateSensors();
   };
 
   const simulateSensors = () => {
-    // Simulate temperature sensor
-    setInterval(() => {
+    // Use single interval for better performance
+    const interval = setInterval(() => {
       setSensorData(prev => ({
         ...prev,
         temperature: {
           value: 25 + Math.random() * 5, // Random between 25-30°C
           unit: '°C'
-        }
-      }));
-    }, 5000);
-
-    // Simulate ultrasonic sensors
-    setInterval(() => {
-      setSensorData(prev => ({
-        ...prev,
+        },
         ultrasonic: {
           distances: [
             0.5 + Math.random() * 1.5, // Front
@@ -187,20 +235,16 @@ const SensorsScreen = () => {
             0.5 + Math.random() * 1.5, // Left
             0.5 + Math.random() * 1.5  // Right
           ]
-        }
-      }));
-    }, 2000);
-
-    // Simulate camera
-    setInterval(() => {
-      setSensorData(prev => ({
-        ...prev,
+        },
         camera: {
           connected: true,
           fps: 15 + Math.random() * 10 // Random between 15-25 FPS
         }
       }));
-    }, 3000);
+    }, refreshRate);
+
+    // Store interval for cleanup
+    return () => clearInterval(interval);
   };
 
   const getBatteryColor = (level) => {
@@ -224,16 +268,29 @@ const SensorsScreen = () => {
   };
 
   const reconnectROS = () => {
-    setIsLoading(true);
+    console.log('Attempting to reconnect ROS...');
+    globalRos = null;
+    globalConnectionStatus = false;
+    setIsConnected(false);
     initializeROS();
   };
 
-  if (isLoading) {
+  // Show UI immediately without loading screen unless actually connecting
+  if (isLoading && !isConnected) {
     return (
       <View style={styles.container}>
         <View style={styles.centerContent}>
           <ActivityIndicator size="large" color="#E0AA3E" />
           <Text style={styles.loadingText}>Connecting to Sensors...</Text>
+          <TouchableOpacity 
+            style={styles.skipButton} 
+            onPress={() => {
+              setIsLoading(false);
+              simulateSensors();
+            }}
+          >
+            <Text style={styles.skipButtonText}>Skip Connection</Text>
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -246,21 +303,29 @@ const SensorsScreen = () => {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>Sensor Dashboard</Text>
-        <View style={styles.statusContainer}>
-          <Ionicons 
-            name={isConnected ? 'cloud-done' : 'cloud-offline'} 
-            size={20} 
-            color={isConnected ? '#4CAF50' : '#F44336'} 
-          />
-          <Text style={[styles.statusText, {color: isConnected ? '#4CAF50' : '#F44336'}]}>
-            {isConnected ? 'Connected' : 'Disconnected'}
-          </Text>
-          {!isConnected && (
-            <TouchableOpacity onPress={reconnectROS} style={styles.reconnectButton}>
-              <Ionicons name="refresh" size={16} color="#FFF" />
-              <Text style={styles.reconnectText}>Reconnect</Text>
-            </TouchableOpacity>
-          )}
+        <View style={styles.headerActions}>
+          <View style={styles.statusContainer}>
+            <Ionicons 
+              name={isConnected ? 'wifi' : 'wifi-outline'} 
+              size={20} 
+              color={isConnected ? '#4CAF50' : '#F44336'} 
+            />
+            <Text style={[styles.statusText, {color: isConnected ? '#4CAF50' : '#F44336'}]}>
+              {isConnected ? 'Connected' : 'Offline'}
+            </Text>
+            {!isConnected && (
+              <TouchableOpacity onPress={reconnectROS} style={styles.reconnectButton}>
+                <Ionicons name="refresh" size={16} color="#1A1A1A" />
+                <Text style={styles.reconnectText}>Reconnect</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          <TouchableOpacity 
+            style={styles.headerSettingsButton}
+            onPress={() => setSettingsModalVisible(true)}
+          >
+            <Ionicons name="settings" size={20} color="#FFF" />
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -530,34 +595,42 @@ const styles = StyleSheet.create({
     backgroundColor: '#262626',
   },
   title: {
-    fontSize: 22,
+    fontSize: 17,
     color: '#FFFFFF',
     fontWeight: '600',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   statusContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
     backgroundColor: '#333',
     padding: 8,
     borderRadius: 10,
+    minWidth: 120, // Ensure minimum width
   },
   statusText: {
     fontSize: 14,
     fontWeight: '600',
+    marginLeft: 8,
+    marginRight: 8, // Add margin for spacing
   },
   reconnectButton: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#E0AA3E',
-    padding: 5,
-    borderRadius: 5,
-    marginLeft: 10,
+    padding: 6,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    marginLeft: 8,
   },
   reconnectText: {
-    color: '#000',
+    color: '#1A1A1A',
     fontSize: 12,
-    marginLeft: 5,
+    marginLeft: 4,
     fontWeight: '600',
   },
   sensorCard: {
@@ -749,7 +822,7 @@ const styles = StyleSheet.create({
   },
   settingsButton: {
     position: 'absolute',
-    bottom: 20,
+    bottom: 100, // Changed from 20 to 100 to move above navigation bar
     right: 20,
     backgroundColor: '#E0AA3E',
     width: 50,
@@ -758,6 +831,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+  },
+  headerSettingsButton: {
+    backgroundColor: '#E0AA3E',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
 

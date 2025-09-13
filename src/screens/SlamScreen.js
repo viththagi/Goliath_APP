@@ -18,10 +18,14 @@ import ROSLIB from 'roslib';
 
 const { width, height } = Dimensions.get('window');
 
-const SlamScreen = () => {
-  const [isConnected, setIsConnected] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-  const [slamStatus, setSlamStatus] = useState('stopped'); // stopped, initializing, mapping
+// Move ROS connection outside component to persist across navigation
+let globalRosSlam = null;
+let globalSlamConnectionStatus = false;
+
+const SLAMScreen = () => {
+  const [isConnected, setIsConnected] = useState(globalSlamConnectionStatus);
+  const [isLoading, setIsLoading] = useState(false);
+  const [slamStatus, setSlamStatus] = useState('stopped');
   const [mapData, setMapData] = useState(null);
   const [robotPose, setRobotPose] = useState({ x: 0, y: 0, theta: 0 });
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
@@ -30,131 +34,179 @@ const SlamScreen = () => {
   const [showParticles, setShowParticles] = useState(true);
   const [laserScanData, setLaserScanData] = useState(null);
   const [scanCount, setScanCount] = useState(0);
+  const [initialPosePublisher, setInitialPosePublisher] = useState(null);
+  const [slamService, setSlamService] = useState(null);
 
-  // Hard-coded ROS connection for Slam Toolbox
-  const ROS_IP = '192.168.2.23'; // Replace with your robot's IP
+  // Hard-coded ROS connection
+  const ROS_IP = '192.168.2.7';
   const ROS_PORT = 9090;
-  const ros = useRef(null);
-  const scanSubscriber = useRef(null);
-  const mapSubscriber = useRef(null);
-  const poseSubscriber = useRef(null);
-  const slamService = useRef(null);
+  const ros = useRef(globalRosSlam);
 
-  // ROS Topics for Slam Toolbox and Nav2
-  const SCAN_TOPIC = '/scan'; // RPLIDAR A1 scan topic
-  const MAP_TOPIC = '/map'; // Occupancy grid map
-  const POSE_TOPIC = '/amcl_pose'; // Robot pose estimate
-  const SLAM_SERVICE = '/slam_toolbox/serialize_map'; // Service to save map
+  // Define ROS topics as constants
+  const SCAN_TOPIC = '/scan';
+  const MAP_TOPIC = '/map';
+  const POSE_TOPIC = '/amcl_pose';
 
   useEffect(() => {
-    initializeROS();
+    // Check if global ROS connection exists
+    if (globalRosSlam && globalSlamConnectionStatus) {
+      console.log('Using existing ROS connection for SLAM');
+      ros.current = globalRosSlam;
+      setIsConnected(true);
+      setupSlamSubscribers();
+      setupSlamPublishers();
+    } else {
+      // Don't show loading screen, initialize in background
+      initializeSlamROS();
+    }
     
     return () => {
-      // Cleanup on unmount
-      if (ros.current) {
-        ros.current.close();
-      }
+      // Don't close global connection on unmount - keep it for reuse
     };
   }, []);
 
-  const initializeROS = () => {
+  const initializeSlamROS = () => {
+    // Skip if already connected
+    if (globalRosSlam && globalRosSlam.isConnected) {
+      setIsConnected(true);
+      return;
+    }
+
     console.log(`Connecting to ROS at ${ROS_IP}:${ROS_PORT} for SLAM...`);
     
-    // Create a new ROS connection
-    ros.current = new ROSLIB.Ros({
+    // Use global connection
+    globalRosSlam = new ROSLIB.Ros({
       url: `ws://${ROS_IP}:${ROS_PORT}`
     });
 
-    // Add event listeners
-    ros.current.on('connection', () => {
+    ros.current = globalRosSlam;
+
+    globalRosSlam.on('connection', () => {
       console.log('Connected to ROS bridge for SLAM');
+      globalSlamConnectionStatus = true;
       setIsConnected(true);
-      setupSubscribers();
+      setupSlamSubscribers();
+      setupSlamPublishers();
       setIsLoading(false);
     });
 
-    ros.current.on('error', (error) => {
-      console.error('Error connecting to ROS:', error);
+    globalRosSlam.on('error', (error) => {
+      console.error('Error connecting to ROS for SLAM:', error);
+      globalSlamConnectionStatus = false;
       setIsConnected(false);
       setIsLoading(false);
-      Alert.alert('Connection Error', `Failed to connect to ${ROS_IP}:${ROS_PORT}`);
+      console.log(`Failed to connect to ${ROS_IP}:${ROS_PORT} for SLAM`);
     });
 
-    ros.current.on('close', () => {
-      console.log('Connection to ROS closed');
+    globalRosSlam.on('close', () => {
+      console.log('SLAM ROS connection closed');
+      globalSlamConnectionStatus = false;
       setIsConnected(false);
+      globalRosSlam = null;
     });
 
-    // Attempt to connect
+    // Set connection timeout to avoid long waits
+    setTimeout(() => {
+      if (!globalSlamConnectionStatus) {
+        console.log('SLAM connection timeout');
+        setIsLoading(false);
+      }
+    }, 2000);
+
     try {
-      ros.current.connect(`ws://${ROS_IP}:${ROS_PORT}`);
+      globalRosSlam.connect(`ws://${ROS_IP}:${ROS_PORT}`);
     } catch (error) {
-      console.error('Failed to connect to ROS:', error);
+      console.error('Failed to connect to ROS for SLAM:', error);
       setIsLoading(false);
-      Alert.alert('Connection Error', `Failed to connect to ${ROS_IP}:${ROS_PORT}`);
     }
   };
 
-  const setupSubscribers = () => {
+  const setupSlamSubscribers = () => {
     if (!ros.current) return;
 
-    // Subscribe to laser scan data from RPLIDAR A1
-    scanSubscriber.current = new ROSLIB.Topic({
-      ros: ros.current,
-      name: SCAN_TOPIC,
-      messageType: 'sensor_msgs/LaserScan'
-    });
-
-    scanSubscriber.current.subscribe((message) => {
-      setLaserScanData(message);
-      setScanCount(prev => prev + 1);
-    });
-
-    // Subscribe to map data
-    mapSubscriber.current = new ROSLIB.Topic({
-      ros: ros.current,
-      name: MAP_TOPIC,
-      messageType: 'nav_msgs/OccupancyGrid'
-    });
-
-    mapSubscriber.current.subscribe((message) => {
-      setMapData(message);
-    });
-
-    // Subscribe to robot pose
-    poseSubscriber.current = new ROSLIB.Topic({
-      ros: ros.current,
-      name: POSE_TOPIC,
-      messageType: 'geometry_msgs/PoseWithCovarianceStamped'
-    });
-
-    poseSubscriber.current.subscribe((message) => {
-      const pose = message.pose.pose;
-      setRobotPose({
-        x: pose.position.x,
-        y: pose.position.y,
-        theta: getYawFromQuaternion(pose.orientation)
+    try {
+      // Map subscriber with throttling
+      const mapSubscriber = new ROSLIB.Topic({
+        ros: ros.current,
+        name: MAP_TOPIC,
+        messageType: 'nav_msgs/OccupancyGrid',
+        throttle_rate: 500
       });
-    });
 
-    // Setup SLAM service for saving maps
-    slamService.current = new ROSLIB.Service({
-      ros: ros.current,
-      name: SLAM_SERVICE,
-      serviceType: 'slam_toolbox/srv/SerializePoseGraph'
-    });
+      mapSubscriber.subscribe((message) => {
+        setMapData(message);
+      });
 
-    console.log('SLAM subscribers initialized');
+      // Laser scan subscriber with throttling
+      const scanSubscriber = new ROSLIB.Topic({
+        ros: ros.current,
+        name: SCAN_TOPIC,
+        messageType: 'sensor_msgs/LaserScan',
+        throttle_rate: 200
+      });
+
+      scanSubscriber.subscribe((message) => {
+        setLaserScanData(message);
+        setScanCount(prev => prev + 1);
+      });
+
+      // Robot pose subscriber with throttling
+      const poseSubscriber = new ROSLIB.Topic({
+        ros: ros.current,
+        name: POSE_TOPIC,
+        messageType: 'geometry_msgs/PoseWithCovarianceStamped',
+        throttle_rate: 200
+      });
+
+      poseSubscriber.subscribe((message) => {
+        const pose = message.pose.pose;
+        setRobotPose({
+          x: pose.position.x,
+          y: pose.position.y,
+          theta: getYawFromQuaternion(pose.orientation)
+        });
+      });
+
+      console.log('SLAM subscribers initialized');
+    } catch (error) {
+      console.error('Error setting up SLAM subscribers:', error);
+    }
+  };
+
+  const setupSlamPublishers = () => {
+    if (!ros.current) return;
+
+    try {
+      // Setup SLAM control publishers
+      const initialPosePub = new ROSLIB.Topic({
+        ros: ros.current,
+        name: '/initialpose',
+        messageType: 'geometry_msgs/PoseWithCovarianceStamped'
+      });
+
+      setInitialPosePublisher(initialPosePub);
+
+      // Setup SLAM service
+      const slamSrv = new ROSLIB.Service({
+        ros: ros.current,
+        name: '/slam_toolbox/save_map',
+        serviceType: 'slam_toolbox/SaveMap'
+      });
+
+      setSlamService(slamSrv);
+
+      console.log('SLAM publishers initialized');
+    } catch (error) {
+      console.error('Error setting up SLAM publishers:', error);
+    }
   };
 
   const getYawFromQuaternion = (quat) => {
-    // Convert quaternion to Euler angles (yaw)
     const x = quat.x;
     const y = quat.y;
     const z = quat.z;
     const w = quat.w;
     
-    // Yaw calculation
     const siny_cosp = 2 * (w * z + x * y);
     const cosy_cosp = 1 - 2 * (y * y + z * z);
     return Math.atan2(siny_cosp, cosy_cosp);
@@ -167,8 +219,6 @@ const SlamScreen = () => {
     }
     
     setSlamStatus('initializing');
-    // In a real implementation, you would start slam_toolbox here
-    // This might involve calling a service or launching nodes
     
     setTimeout(() => {
       setSlamStatus('mapping');
@@ -179,21 +229,19 @@ const SlamScreen = () => {
   const stopSlam = () => {
     setSlamStatus('stopped');
     Alert.alert('SLAM Stopped', 'Slam Toolbox has been stopped');
-    // In a real implementation, you would stop slam_toolbox here
   };
 
   const saveMap = () => {
-    if (!slamService.current) {
+    if (!slamService) {
       Alert.alert('Error', 'SLAM service not available');
       return;
     }
 
-    // Create a request to save the map
     const request = new ROSLIB.ServiceRequest({
       filename: 'map_' + new Date().toISOString().replace(/[:.]/g, '-')
     });
 
-    slamService.current.callService(request, (result) => {
+    slamService.callService(request, (result) => {
       if (result.success) {
         Alert.alert('Success', 'Map saved successfully!');
       } else {
@@ -205,7 +253,6 @@ const SlamScreen = () => {
   const resetMap = () => {
     Alert.alert('Map Reset', 'Map data has been cleared');
     setMapData(null);
-    // In a real implementation, you would call a service to clear the pose graph
   };
 
   const getStatusColor = () => {
@@ -226,17 +273,25 @@ const SlamScreen = () => {
     }
   };
 
-  const reconnectROS = () => {
-    setIsLoading(true);
-    initializeROS();
+  const reconnectSlam = () => {
+    globalRosSlam = null;
+    globalSlamConnectionStatus = false;
+    initializeSlamROS();
   };
 
+  // Only show loading if explicitly needed
   if (isLoading) {
     return (
       <View style={styles.container}>
         <View style={styles.centerContent}>
           <ActivityIndicator size="large" color="#E0AA3E" />
           <Text style={styles.loadingText}>Connecting to ROS for SLAM...</Text>
+          <TouchableOpacity 
+            style={styles.skipButton} 
+            onPress={() => setIsLoading(false)}
+          >
+            <Text style={styles.skipButtonText}>Continue Offline</Text>
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -244,22 +299,20 @@ const SlamScreen = () => {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" />
-      
-      {/* Header */}
+      {/* Header with connection status */}
       <View style={styles.header}>
-        <Text style={styles.title}>SLAM Navigation</Text>
+        <Text style={styles.title}>SLAM Mapping</Text>
         <View style={styles.statusContainer}>
           <Ionicons 
-            name={isConnected ? 'cloud-done' : 'cloud-offline'} 
+            name={isConnected ? 'map' : 'map-outline'} 
             size={20} 
             color={isConnected ? '#4CAF50' : '#F44336'} 
           />
           <Text style={[styles.statusText, {color: isConnected ? '#4CAF50' : '#F44336'}]}>
-            {isConnected ? 'Connected' : 'Disconnected'}
+            {isConnected ? 'Connected' : 'Offline'}
           </Text>
           {!isConnected && (
-            <TouchableOpacity onPress={reconnectROS} style={styles.reconnectButton}>
+            <TouchableOpacity onPress={reconnectSlam} style={styles.reconnectButton}>
               <Ionicons name="refresh" size={16} color="#FFF" />
               <Text style={styles.reconnectText}>Reconnect</Text>
             </TouchableOpacity>
@@ -518,7 +571,7 @@ const SlamScreen = () => {
   );
 };
 
-// Reuse the styles from the previous implementation
+// Add these styles if not present
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -547,7 +600,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#262626',
   },
   title: {
-    fontSize: 22,
+    fontSize: 17,
     color: '#FFFFFF',
     fontWeight: '600',
   },
@@ -819,6 +872,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginBottom: 5,
   },
+  skipButton: {
+    marginTop: 20,
+    backgroundColor: '#E0AA3E',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  skipButtonText: {
+    color: '#000',
+    fontWeight: '600',
+  },
 });
 
-export default SlamScreen;
+export default SLAMScreen;
