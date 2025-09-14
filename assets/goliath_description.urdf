@@ -14,7 +14,7 @@
       <geometry>
         <mesh filename="@viththagi/viththagi.github.io/mesh/link_0.stl"/>
       </geometry>
-      <material name="silver"/>
+      <material name="dark_gray"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -34,7 +34,7 @@
       <geometry>
         <mesh filename="@viththagi/viththagi.github.io/mesh/link_1.stl"/>
       </geometry>
-      <material name="silver"/>
+      <material name="light_gray"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -54,7 +54,7 @@
       <geometry>
         <mesh filename="@viththagi/viththagi.github.io/mesh/link_2.stl"/>
       </geometry>
-      <material name="silver"/>
+      <material name="white"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -74,7 +74,7 @@
       <geometry>
         <mesh filename="@viththagi/viththagi.github.io/mesh/link_3.stl"/>
       </geometry>
-      <material name="silver"/>
+      <material name="light_gray"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -94,7 +94,7 @@
       <geometry>
         <mesh filename="@viththagi/viththagi.github.io/mesh/link_4.stl"/>
       </geometry>
-      <material name="silver"/>
+      <material name="orange"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -114,7 +114,7 @@
       <geometry>
         <mesh filename="@viththagi/viththagi.github.io/mesh/link_5.stl"/>
       </geometry>
-      <material name="silver"/>
+      <material name="orange"/>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -452,12 +452,28 @@
     <color rgba="0.75 0.75 0.75 1.0"/>
   </material>
   
+  <material name="dark_gray">
+    <color rgba="0.3 0.3 0.3 1.0"/>
+  </material>
+  
+  <material name="light_gray">
+    <color rgba="0.6 0.6 0.6 1.0"/>
+  </material>
+  
   <material name="black">
     <color rgba="0.1 0.1 0.1 1.0"/>
   </material>
   
   <material name="blue">
     <color rgba="0.0 0.0 0.8 1.0"/>
+  </material>
+  
+  <material name="orange">
+    <color rgba="1.0 0.5 0.0 1.0"/>
+  </material>
+  
+  <material name="white">
+    <color rgba="0.9 0.9 0.9 1.0"/>
   </material>
 
 </robot>

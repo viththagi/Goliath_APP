@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import ROSLIB from 'roslib';
 
 // Grid Component
-const Grid = ({ size = 6, color = '#444' }) => {
+const Grid = ({ size = 10, color = '#444' }) => {
   return (
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
       <planeGeometry args={[size, size]} />
@@ -16,7 +16,7 @@ const Grid = ({ size = 6, color = '#444' }) => {
 };
 
 // Axis Helper Component - ROS Convention
-const Axis = ({ size = 1.2 }) => {
+const Axis = ({ size = 2 }) => {
   return (
     <>
       {/* X Axis (Red) - FORWARD */}
@@ -49,7 +49,7 @@ const RealisticRobotArm = ({ jointAngles = {} }) => {
   const joint6 = jointAngles.joint_6 || 0;
 
   return (
-    <group scale={[0.6, 0.6, 0.6]} rotation={[Math.PI/2, 0, 0]}>
+    <group rotation={[Math.PI/2, 0, 0]}>
       {/* Base Platform - Dark gray industrial base */}
       <mesh position={[0, -0.35, 0]} receiveShadow>
         <cylinderGeometry args={[0.2, 0.24, 0.1, 32]} />
@@ -360,7 +360,7 @@ const URDFViewer = ({
     <View style={[styles.container, style, { height, width, flex: 0 }]}>
       <Canvas
         style={[styles.canvas, { height, width }]}
-        camera={{ position: [0, -0.8, 0.3], fov: 75 }}
+        camera={{ position: [0, -1.2, 0.5], fov: 60 }}
         shadows
         onCreated={({ gl, scene }) => {
           gl.setClearColor('#111133');
